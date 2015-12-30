@@ -101,26 +101,6 @@ func (r *MultiFile) ReadAt(p []byte, off int64) (int, error) {
 	return f.ReadAt(p, off)
 }
 
-// Write writes to a buffer.
-func (r *MultiFile) Write(p []byte) (int, error) {
-	n, err := r.WriteAt(p, r.pos)
-	if err != nil {
-		return n, err
-	}
-
-	r.pos += int64(n)
-	return n, err
-}
-
-// WriteAt writes to the buffer at offset.
-func (r *MultiFile) WriteAt(p []byte, off int64) (int, error) {
-	f := r.fileAt(off)
-	if f == nil {
-		return 0, io.EOF
-	}
-	return f.WriteAt(p, off)
-}
-
 // Close closes the file.
 func (r *MultiFile) Close() error {
 	for i := range r.files {
