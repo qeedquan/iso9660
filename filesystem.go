@@ -124,7 +124,7 @@ func (fs *FileSystem) Chdir(dir string) error {
 	errNotDir := &os.PathError{"chdir", dir, ErrNotDir}
 	errNotExist := &os.PathError{"chdir", dir, os.ErrNotExist}
 
-	dir = stdpath.Join(fs.curdir, dir)
+	dir = strings.ToUpper(stdpath.Join(fs.curdir, dir))
 	if dir == "." || dir == "" {
 		dir = "/"
 	}
@@ -149,6 +149,8 @@ func (fs *FileSystem) Chdir(dir string) error {
 		if !f.fi.IsDir() {
 			return errNotDir
 		}
+
+		fs.dirs[dir] = true
 	}
 
 	fs.curdir = dir
