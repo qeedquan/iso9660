@@ -98,7 +98,32 @@ func (r *MultiFile) ReadAt(p []byte, off int64) (int, error) {
 	if f == nil {
 		return 0, io.EOF
 	}
-	return f.ReadAt(p, off)
+
+	n := 0
+	for {
+		nr, err := f.ReadAt(p[n:], off)
+		n += nr
+
+		switch {
+		case err != nil && err != io.EOF:
+			return n, err
+
+		case err == io.EOF:
+			if n == len(p) {
+				return n, io.EOF
+			}
+
+			off += int64(nr)
+			xf := r.fileAt(off)
+			if xf == nil || xf == f {
+				return n, io.EOF
+			}
+			f = xf
+
+		default:
+			return n, nil
+		}
+	}
 }
 
 // Close closes the file.
