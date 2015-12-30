@@ -15,9 +15,8 @@ import (
 )
 
 var (
-	ErrIsDir   = errors.New("is a directory")
-	ErrNotDir  = errors.New("not a directory")
-	ErrInvalid = errors.New("invalid argument")
+	ErrIsDir  = errors.New("is a directory")
+	ErrNotDir = errors.New("not a directory")
 )
 
 type volumeDescriptor struct {
@@ -44,9 +43,8 @@ type directory struct {
 		Size uint8
 		Gap  uint8
 	}
-	Seq  uint16
-	Nam  string
-	Next int
+	Seq uint16
+	Nam string
 }
 
 const (
@@ -81,12 +79,14 @@ type FileSystem struct {
 	r        Reader
 	pvd, svd primaryVolumeDescriptor
 	paths    []path
-	cache    map[string]File
+	dirs     map[string]bool
+	files    map[string]File
+	curdir   string
 }
 
 // NewFileSystem makes a FileSystem from a Reader
 func NewFileSystem(r Reader) (*FileSystem, error) {
-	fs := &FileSystem{r: r}
+	fs := &FileSystem{r: r, curdir: "/"}
 
 	err := fs.findVolumes()
 	if err != nil {
@@ -116,6 +116,48 @@ func Open(name ...string) (*FileSystem, error) {
 // Close closes the reader that the filesystem is using.
 func (fs *FileSystem) Close() error {
 	return fs.r.Close()
+}
+
+// Chdir changes the filesystem current working directory.
+// There will be an error returned if it is not a valid directory.
+func (fs *FileSystem) Chdir(dir string) error {
+	errNotDir := &os.PathError{"chdir", dir, ErrNotDir}
+	errNotExist := &os.PathError{"chdir", dir, os.ErrNotExist}
+
+	dir = stdpath.Join(fs.curdir, dir)
+	if dir == "." || dir == "" {
+		dir = "/"
+	}
+
+	if _, exist := fs.files[dir]; exist {
+		return errNotDir
+	}
+
+	// worst case, we have to walk because the path tables
+	// can be incomplete
+	if !fs.dirs[dir] {
+		xdir := fs.curdir
+		fs.curdir = dir
+
+		f, err := fs.Open(".")
+		fs.curdir = xdir
+
+		if err != nil {
+			return errNotExist
+		}
+
+		if !f.fi.IsDir() {
+			return errNotDir
+		}
+	}
+
+	fs.curdir = dir
+	return nil
+}
+
+// Getwd gets the current working directory.
+func (fs *FileSystem) Getwd() (string, error) {
+	return fs.curdir, nil
 }
 
 // findVolumes finds the volume sectors and record its information.
@@ -205,10 +247,44 @@ func (fs *FileSystem) buildPaths() {
 }
 
 // buildCache builds the cache of files by reading
-// the path table if possible.
+// the path table if possible. Directories are not cached
+// because the path table entries for them do not have enough
+// metadata that the directory table entry provides.
+// We will have to walk for the directories, but can lookup
+// files immediately.
 func (fs *FileSystem) buildCache() {
 	fs.buildPaths()
-	fs.cache = make(map[string]File)
+	fs.dirs = make(map[string]bool)
+	fs.files = make(map[string]File)
+
+	b := make([]byte, maxSectorLength*2)
+	for _, p := range fs.paths {
+		_, err := fs.r.ReadSector(int64(p.LBA), b)
+		if err != nil {
+			continue
+		}
+
+		d := directory{
+			LBA:   p.LBA,
+			Nam:   p.Name,
+			Flags: modeDir,
+		}
+
+		f := makeFile(fs, d)
+		fi, err := f.Readdir(-1)
+		if err != nil {
+			continue
+		}
+
+		for _, fi := range fi {
+			name := stdpath.Join(fs.fullPath(p), fi.Name())
+			if fi.IsDir() {
+				fs.dirs[name] = true
+			} else {
+				fs.files[name] = makeFile(fs, fi.(directory))
+			}
+		}
+	}
 }
 
 // Open opens a file.
@@ -220,7 +296,12 @@ func (fs *FileSystem) Open(name string) (*File, error) {
 		return nil, &os.PathError{"open", name, os.ErrNotExist}
 	}
 
-	toks := splitPath(name)
+	xname := stdpath.Join(fs.curdir, strings.ToUpper(name))
+	if f, exist := fs.files[xname]; exist {
+		return &f, nil
+	}
+
+	toks := splitPath(xname)
 loop:
 	for i := len(toks) - 1; i >= 0; i-- {
 		for {
@@ -326,11 +407,6 @@ func readDir(p []byte) (directory, error) {
 	}
 	d.Nam = stdpath.Clean(d.Nam)
 
-	if d.IsDir() {
-		d.Next = int(d.Siz)
-	} else {
-		d.Next = int(34 + p[32])
-	}
 	return d, nil
 }
 
@@ -415,7 +491,7 @@ func (f *File) ReadAt(p []byte, off int64) (n int, err error) {
 	}
 
 	if off < 0 {
-		return 0, ErrInvalid
+		return 0, os.ErrInvalid
 	}
 
 	vd := &f.fs.pvd
@@ -461,11 +537,11 @@ func (f *File) Seek(off int64, whence int) (int64, error) {
 	case os.SEEK_END:
 		off = int64(f.fi.Length) + off
 	default:
-		return 0, ErrInvalid
+		return 0, os.ErrInvalid
 	}
 
 	if off < 0 {
-		return 0, ErrInvalid
+		return 0, os.ErrInvalid
 	}
 
 	f.off = off
@@ -498,7 +574,12 @@ func (f *File) Readdir(n int) (fi []os.FileInfo, err error) {
 	s, e := dp.start, dp.end
 	lba := dp.lba
 
-	for i := int64(0); i < int64(f.fi.Length); {
+	i := int64(0)
+	for {
+		if f.fi.Length != 0 && i >= int64(f.fi.Length) {
+			break
+		}
+
 		d, xerr := readDir(b[s:e])
 		if xerr != nil {
 			copy(b, b[s:e])

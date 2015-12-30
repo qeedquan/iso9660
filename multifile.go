@@ -69,11 +69,11 @@ func (r *MultiFile) Seek(off int64, whence int) (int64, error) {
 		off += r.size
 
 	default:
-		return 0, ErrInvalid
+		return 0, os.ErrInvalid
 	}
 
 	if off < 0 {
-		return 0, ErrInvalid
+		return 0, os.ErrInvalid
 	}
 
 	r.pos = off
