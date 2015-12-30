@@ -1,4 +1,4 @@
-// Package ISO9660 implements a basic reaer for the ISO9660 filesystem.
+// Package ISO9660 implements a basic reader for the ISO9660 filesystem.
 // Extensions such as Joliet or Rock Ridge is not implemented.
 package iso9660
 
