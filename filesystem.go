@@ -424,7 +424,7 @@ func (p path) String() string {
 func (d directory) ModTime() time.Time {
 	p := d.Time[:]
 	t := time.Date(int(p[0])+1900, time.Month(p[1]), int(p[2]), int(p[3]), int(p[4]), int(p[5]), 0, time.UTC)
-	t.Add(time.Duration(int8(p[7])) * 15 * time.Minute)
+	t.Add(time.Duration(int8(p[6])) * 15 * time.Minute)
 	return t
 }
 
